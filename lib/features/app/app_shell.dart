@@ -64,9 +64,6 @@ class _AppShellState extends State<AppShell> {
       ),
     ];
 
-    // Get list of background processes that aren't in the current sessions list
-    final backgroundProcesses = _getBackgroundProcesses();
-
     return Scaffold(
       body: Row(
         children: [
@@ -110,13 +107,6 @@ class _AppShellState extends State<AppShell> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Divider(),
-                  // Show background processes if any
-                  if (backgroundProcesses.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    _buildBackgroundProcessesSection(theme, backgroundProcesses),
-                    const SizedBox(height: 8),
-                    const Divider(),
-                  ],
                   const SizedBox(height: 8),
                   IconButton(
                     icon: const Icon(Icons.settings),
@@ -225,74 +215,5 @@ class _AppShellState extends State<AppShell> {
         _commandSessions[sessionIndex] = updatedSession;
       });
     }
-  }
-
-  // Build the background processes section
-  Widget _buildBackgroundProcessesSection(ThemeData theme, List<String> processes) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          'Background',
-          style: theme.textTheme.bodySmall,
-        ),
-        const SizedBox(height: 4),
-        ...processes.map((processId) {
-          // Get the command from the active processes
-          final command = _getCommandForProcessId(processId);
-          if (command == null) return const SizedBox.shrink();
-          
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4.0),
-            child: Tooltip(
-              message: command.label,
-              child: IconButton(
-                icon: Badge(
-                  label: const Text(
-                    '⌛',
-                    style: TextStyle(fontSize: 10),
-                  ),
-                  child: Icon(command.icon, size: 20),
-                ),
-                onPressed: () => _resumeBackgroundProcess(processId, command),
-                constraints: const BoxConstraints(
-                  minWidth: 40,
-                  minHeight: 40,
-                ),
-              ),
-            ),
-          );
-        }).toList(),
-      ],
-    );
-  }
-
-  // Get list of background process IDs
-  List<String> _getBackgroundProcesses() {
-    final activeProcessIds = CommandService.getActiveProcessIds();
-    final sessionProcessIds = _commandSessions.map((s) => s.id).toList();
-    
-    // Return IDs that are in active processes but not in current sessions
-    return activeProcessIds.where((id) => !sessionProcessIds.contains(id)).toList();
-  }
-  
-  // Get command for a process ID
-  Command? _getCommandForProcessId(String processId) {
-    return CommandService.getCommandForProcessId(processId);
-  }
-  
-  // Resume a background process by creating a new session for it
-  void _resumeBackgroundProcess(String processId, Command command) {
-    // Create a new session for this existing process
-    final session = CommandSession(
-      id: processId,
-      command: command,
-      isRunning: true,
-    );
-    
-    setState(() {
-      _commandSessions.add(session);
-      _selectedIndex = 2; // Navigate to terminals page
-    });
   }
 } 
