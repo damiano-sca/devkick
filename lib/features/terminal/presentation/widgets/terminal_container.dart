@@ -25,7 +25,7 @@ class TerminalContainer extends StatefulWidget {
 class _TerminalContainerState extends State<TerminalContainer> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   int _currentIndex = 0;
-  final Map<String, GlobalKey<_TerminalTabState>> _tabKeys = {};
+  final Map<String, GlobalKey> _tabKeys = {};
 
   @override
   void initState() {
@@ -46,7 +46,7 @@ class _TerminalContainerState extends State<TerminalContainer> with SingleTicker
     // Create keys for new sessions
     for (final session in widget.sessions) {
       if (!_tabKeys.containsKey(session.id)) {
-        _tabKeys[session.id] = GlobalKey<_TerminalTabState>();
+        _tabKeys[session.id] = GlobalKey();
       }
     }
   }
