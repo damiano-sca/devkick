@@ -3,11 +3,11 @@ import 'package:uuid/uuid.dart';
 import 'package:devkick/core/constants/app_constants.dart';
 import 'package:devkick/core/models/command.dart';
 import 'package:devkick/core/models/command_session.dart';
+import 'package:devkick/core/services/command_service.dart';
 import 'package:devkick/features/home/presentation/pages/home_page.dart';
-import 'package:devkick/features/terminal/presentation/pages/terminal_page.dart';
+import 'package:devkick/features/terminal/presentation/pages/terminals_page.dart';
 import 'package:devkick/features/settings/presentation/pages/settings_page.dart';
 import 'package:devkick/features/routines/presentation/pages/routines_page.dart';
-import 'package:devkick/core/services/command_service.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -42,25 +42,26 @@ class _AppShellState extends State<AppShell> {
         selectedIcon: Icon(Icons.playlist_play),
         label: Text('Routines'),
       ),
-      // Add destinations for each active command session
-      for (final session in _commandSessions)
-        NavigationRailDestination(
-          icon: Badge(
-            label: Text(
-              session.isRunning ? '⌛' : '✓',
-              style: const TextStyle(fontSize: 10),
-            ),
-            child: Icon(session.command.icon),
+      // Add terminal destination
+      NavigationRailDestination(
+        icon: Badge(
+          isLabelVisible: _commandSessions.isNotEmpty,
+          label: Text(
+            _commandSessions.length.toString(),
+            style: const TextStyle(fontSize: 10),
           ),
-          selectedIcon: Badge(
-            label: Text(
-              session.isRunning ? '⌛' : '✓',
-              style: const TextStyle(fontSize: 10),
-            ),
-            child: Icon(session.command.icon),
-          ),
-          label: Text(session.command.label),
+          child: const Icon(Icons.terminal_outlined),
         ),
+        selectedIcon: Badge(
+          isLabelVisible: _commandSessions.isNotEmpty,
+          label: Text(
+            _commandSessions.length.toString(),
+            style: const TextStyle(fontSize: 10),
+          ),
+          child: const Icon(Icons.terminal),
+        ),
+        label: const Text('Terminals'),
+      ),
     ];
 
     // Get list of background processes that aren't in the current sessions list
@@ -137,9 +138,26 @@ class _AppShellState extends State<AppShell> {
             width: 1,
             color: theme.colorScheme.outlineVariant,
           ),
-          // Main Content
+          // Main Content - Use IndexedStack to preserve widget state when switching tabs
           Expanded(
-            child: _buildPage(),
+            child: IndexedStack(
+              index: _selectedIndex,
+              children: [
+                // Keep these widgets alive by using the IndexedStack
+                HomePage(
+                  onRunCommand: _startCommandSession,
+                ),
+                RoutinesPage(
+                  onRunCommand: _startCommandSession,
+                ),
+                TerminalsPage(
+                  sessions: _commandSessions,
+                  onTerminate: _terminateSession,
+                  onSessionUpdated: _updateSession,
+                  onRunCommand: _startCommandSession,
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -155,49 +173,19 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
-  // Build the current page based on selected index
-  Widget _buildPage() {
-    if (_selectedIndex == 0) {
-      // Home page
-      return HomePage(
-        onRunCommand: _startCommandSession,
-      );
-    } else if (_selectedIndex == 1) {
-      // Routines page
-      return RoutinesPage(
-        onRunCommand: _startCommandSession,
-      );
-    } else if (_selectedIndex > 1 && _selectedIndex <= _commandSessions.length + 1) {
-      // Terminal page for command session
-      final sessionIndex = _selectedIndex - 2;
-      final session = _commandSessions[sessionIndex];
-      
-      // Return terminal page with session, when the terminal updates the session,
-      // we need to update our reference to it
-      return TerminalPage(
-        key: ValueKey('terminal_${session.id}'),
-        session: session,
-        onTerminate: () => _terminateSession(session.id),
-        onSessionUpdated: _updateSession,
-      );
-    } else {
-      // Fallback
-      return const Center(child: Text('Page not found'));
-    }
-  }
-
   // Start a new command session
   void _startCommandSession(Command command) {
     // Check if a session for this command already exists
     final existingSessionIndex = _commandSessions.indexWhere(
       (session) => session.command.id == command.id && 
-                   session.command.command == command.command
+                   session.command.command == command.command &&
+                   session.isRunning
     );
     
     if (existingSessionIndex >= 0) {
-      // If a session already exists, just navigate to it
+      // If a session already exists, just navigate to the terminals page
       setState(() {
-        _selectedIndex = existingSessionIndex + 2; // +2 for Home and Routines pages
+        _selectedIndex = 2; // Terminals page index
       });
       return;
     }
@@ -211,7 +199,7 @@ class _AppShellState extends State<AppShell> {
     
     setState(() {
       _commandSessions.add(session);
-      _selectedIndex = _commandSessions.length + 1; // Navigate to the new session (offset by 2: Home + Routines)
+      _selectedIndex = 2; // Navigate to terminals page
     });
   }
 
@@ -220,17 +208,10 @@ class _AppShellState extends State<AppShell> {
     final sessionIndex = _commandSessions.indexWhere((s) => s.id == sessionId);
     
     if (sessionIndex != -1) {
+      CommandService.killProcess(sessionId);
+      
       setState(() {
         _commandSessions.removeAt(sessionIndex);
-        
-        // If we removed the currently selected session, navigate to home
-        if (_selectedIndex == sessionIndex + 2) { // +2 for Home and Routines pages
-          _selectedIndex = 0;
-        } 
-        // If we removed a session before the currently selected one, adjust the selected index
-        else if (_selectedIndex > sessionIndex + 2) { // +2 for Home and Routines pages
-          _selectedIndex--;
-        }
       });
     }
   }
@@ -311,7 +292,7 @@ class _AppShellState extends State<AppShell> {
     
     setState(() {
       _commandSessions.add(session);
-      _selectedIndex = _commandSessions.length + 1; // Navigate to the new session
+      _selectedIndex = 2; // Navigate to terminals page
     });
   }
 } 
