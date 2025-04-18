@@ -22,26 +22,32 @@ class TerminalContainer extends StatefulWidget {
   State<TerminalContainer> createState() => _TerminalContainerState();
 }
 
-class _TerminalContainerState extends State<TerminalContainer> with SingleTickerProviderStateMixin {
+class _TerminalContainerState extends State<TerminalContainer> with TickerProviderStateMixin {
   TabController? _tabController;
   int _currentIndex = 0;
   final Map<String, GlobalKey> _tabKeys = {};
+  bool _isDisposed = false;
 
   @override
   void initState() {
     super.initState();
+    _isDisposed = false;
     _initTabKeys();
     _initTabController();
   }
 
   void _initTabController() {
+    if (_isDisposed || !mounted) return;
+    
     if (widget.sessions.isNotEmpty) {
       _tabController = TabController(
         length: widget.sessions.length,
         vsync: this,
         initialIndex: _currentIndex < widget.sessions.length ? _currentIndex : 0,
       );
-      _tabController?.addListener(_handleTabChange);
+      if (!_isDisposed && mounted) {
+        _tabController?.addListener(_handleTabChange);
+      }
     }
   }
 
@@ -58,6 +64,8 @@ class _TerminalContainerState extends State<TerminalContainer> with SingleTicker
   void didUpdateWidget(TerminalContainer oldWidget) {
     super.didUpdateWidget(oldWidget);
     
+    if (_isDisposed || !mounted) return;
+    
     // Create keys for new sessions
     _initTabKeys();
     
@@ -68,46 +76,82 @@ class _TerminalContainerState extends State<TerminalContainer> with SingleTicker
   }
 
   void _updateTabController() {
-    _tabController?.removeListener(_handleTabChange);
-    _tabController?.dispose();
+    if (_isDisposed || !mounted) return;
+    
+    if (_tabController != null) {
+      _tabController!.removeListener(_handleTabChange);
+      
+      // Safe dispose with error handling
+      try {
+        _tabController!.dispose();
+      } catch (e) {
+        // Ignore if already disposed
+        debugPrint('TabController dispose error (likely already disposed): $e');
+      }
+      
+      _tabController = null;
+    }
     
     if (widget.sessions.isEmpty) {
-      _tabController = null;
       _currentIndex = 0;
       return;
     }
     
-    _tabController = TabController(
-      length: widget.sessions.length, 
-      vsync: this,
-      initialIndex: _currentIndex < widget.sessions.length ? _currentIndex : 0,
-    );
-    _tabController?.addListener(_handleTabChange);
-    
-    setState(() {
-      _currentIndex = _tabController?.index ?? 0;
+    // Create new controller with deferred execution to avoid initialization race conditions
+    Future.microtask(() {
+      if (_isDisposed || !mounted) return;
+      
+      final safeIndex = _currentIndex < widget.sessions.length ? _currentIndex : 0;
+      _tabController = TabController(
+        length: widget.sessions.length, 
+        vsync: this,
+        initialIndex: safeIndex,
+      );
+      
+      if (!_isDisposed && mounted) {
+        _tabController?.addListener(_handleTabChange);
+        setState(() {
+          _currentIndex = safeIndex;
+        });
+      }
     });
   }
 
   void _handleTabChange() {
-    if (_tabController == null) return;
+    if (_isDisposed || !mounted || _tabController == null) return;
     
     if (_tabController!.indexIsChanging || _currentIndex != _tabController!.index) {
-      setState(() {
-        _currentIndex = _tabController!.index;
-      });
+      if (mounted) {
+        setState(() {
+          _currentIndex = _tabController!.index;
+        });
+      }
     }
   }
 
   @override
   void dispose() {
-    _tabController?.removeListener(_handleTabChange);
-    _tabController?.dispose();
+    _isDisposed = true;
+    if (_tabController != null) {
+      _tabController!.removeListener(_handleTabChange);
+      
+      // Safe dispose with error handling
+      try {
+        _tabController!.dispose();
+      } catch (e) {
+        // Ignore if already disposed
+        debugPrint('TabController dispose error (likely already disposed): $e');
+      }
+      
+      _tabController = null;
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isDisposed) return const SizedBox.shrink();
+    
     final theme = Theme.of(context);
 
     if (widget.sessions.isEmpty) {
@@ -137,11 +181,16 @@ class _TerminalContainerState extends State<TerminalContainer> with SingleTicker
 
     // Ensure tab controller is properly initialized with the correct length
     if (_tabController == null || _tabController!.length != widget.sessions.length) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
+      // Schedule a rebuild with a microtask to avoid build phase conflicts
+      Future.microtask(() {
+        if (mounted && !_isDisposed) {
           _updateTabController();
+          // Trigger a rebuild after the microtask is complete
+          if (mounted) setState(() {});
         }
       });
+      
+      // Show loading while waiting for controller to initialize
       return const Center(child: CircularProgressIndicator());
     }
 
@@ -186,18 +235,28 @@ class _TerminalContainerState extends State<TerminalContainer> with SingleTicker
           ),
         ),
         
-        // Tab Content
+        // Tab Content - Use a Builder to ensure proper context for the controller
         Expanded(
-          child: TabBarView(
-            controller: _tabController,
-            children: widget.sessions.map((session) {
-              // Use a key to preserve widget state even when order changes
-              return TerminalTab(
-                key: _tabKeys[session.id] ?? ValueKey('terminal_tab_${session.id}'),
-                session: session,
-                onSessionUpdated: widget.onSessionUpdated,
+          child: Builder(
+            builder: (context) {
+              // Additional safety check
+              if (_tabController == null || _tabController!.length != widget.sessions.length) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              
+              // Create TabBarView
+              return TabBarView(
+                controller: _tabController,
+                children: widget.sessions.map((session) {
+                  // Use a key to preserve widget state even when order changes
+                  return TerminalTab(
+                    key: _tabKeys[session.id] ?? GlobalKey(),
+                    session: session,
+                    onSessionUpdated: widget.onSessionUpdated,
+                  );
+                }).toList(),
               );
-            }).toList(),
+            },
           ),
         ),
       ],
