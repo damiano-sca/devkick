@@ -158,10 +158,16 @@ class _AppShellState extends State<AppShell> {
       );
     } else if (_selectedIndex > 1 && _selectedIndex <= _commandSessions.length + 1) {
       // Terminal page for command session
-      final session = _commandSessions[_selectedIndex - 2];
+      final sessionIndex = _selectedIndex - 2;
+      final session = _commandSessions[sessionIndex];
+      
+      // Return terminal page with session, when the terminal updates the session,
+      // we need to update our reference to it
       return TerminalPage(
+        key: ValueKey('terminal_${session.id}'),
         session: session,
         onTerminate: () => _terminateSession(session.id),
+        onSessionUpdated: _updateSession,
       );
     } else {
       // Fallback
@@ -171,6 +177,21 @@ class _AppShellState extends State<AppShell> {
 
   // Start a new command session
   void _startCommandSession(Command command) {
+    // Check if a session for this command already exists
+    final existingSessionIndex = _commandSessions.indexWhere(
+      (session) => session.command.id == command.id && 
+                   session.command.command == command.command
+    );
+    
+    if (existingSessionIndex >= 0) {
+      // If a session already exists, just navigate to it
+      setState(() {
+        _selectedIndex = existingSessionIndex + 2; // +2 for Home and Routines pages
+      });
+      return;
+    }
+    
+    // Otherwise create a new session
     final sessionId = _uuid.v4();
     final session = CommandSession(
       id: sessionId,
@@ -199,6 +220,17 @@ class _AppShellState extends State<AppShell> {
         else if (_selectedIndex > sessionIndex + 2) { // +2 for Home and Routines pages
           _selectedIndex--;
         }
+      });
+    }
+  }
+  
+  // Update a command session in our list
+  void _updateSession(CommandSession updatedSession) {
+    final sessionIndex = _commandSessions.indexWhere((s) => s.id == updatedSession.id);
+    
+    if (sessionIndex != -1) {
+      setState(() {
+        _commandSessions[sessionIndex] = updatedSession;
       });
     }
   }

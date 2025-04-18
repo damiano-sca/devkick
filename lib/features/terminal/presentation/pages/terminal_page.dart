@@ -7,11 +7,13 @@ import 'package:devkick/core/services/command_service.dart';
 class TerminalPage extends StatefulWidget {
   final CommandSession session;
   final VoidCallback onTerminate;
+  final Function(CommandSession)? onSessionUpdated;
 
   const TerminalPage({
     super.key, 
     required this.session,
     required this.onTerminate,
+    this.onSessionUpdated,
   });
 
   @override
@@ -21,7 +23,7 @@ class TerminalPage extends StatefulWidget {
 class _TerminalPageState extends State<TerminalPage> {
   late StreamSubscription<String>? _outputSubscription;
   final ScrollController _scrollController = ScrollController();
-  final List<String> _outputLines = [];
+  List<String> _outputLines = [];
   bool _isRunning = true;
   late CommandSession _session;
   late StreamController<String> _outputStreamController;
@@ -31,7 +33,17 @@ class _TerminalPageState extends State<TerminalPage> {
     super.initState();
     _session = widget.session;
     _outputStreamController = StreamController<String>.broadcast();
-    _startProcess();
+    
+    // Initialize output lines and running state from session if it has been completed before
+    if (_session.completed) {
+      _outputLines = List.from(_session.outputLines);
+      _isRunning = _session.isRunning;
+      // Schedule scroll to bottom for after the build
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    } else {
+      // Only start the process if it hasn't been completed before
+      _startProcess();
+    }
   }
 
   @override
@@ -46,15 +58,23 @@ class _TerminalPageState extends State<TerminalPage> {
       // Create a new stream controller
       _outputStreamController = StreamController<String>.broadcast();
       
-      // Update session and clear previous output
+      // Update session and check if it's already been run
       setState(() {
         _session = widget.session;
-        _outputLines.clear();
-        _isRunning = true;
+        
+        if (_session.completed) {
+          // If the session has already been run, just load its output
+          _outputLines = List.from(_session.outputLines);
+          _isRunning = _session.isRunning;
+          // Schedule scroll to bottom for after the build
+          WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+        } else {
+          // Only if the session hasn't been run before
+          _outputLines = [];
+          _isRunning = true;
+          _startProcess();
+        }
       });
-      
-      // Start the new process
-      _startProcess();
     }
   }
 
@@ -67,6 +87,8 @@ class _TerminalPageState extends State<TerminalPage> {
         onStdout: (data) {
           setState(() {
             _outputLines.add(data);
+            // Update the session's outputLines
+            _updateSessionOutputLines();
           });
           _outputStreamController.add(data);
           _scrollToBottom();
@@ -74,6 +96,8 @@ class _TerminalPageState extends State<TerminalPage> {
         onStderr: (error) {
           setState(() {
             _outputLines.add(error);
+            // Update the session's outputLines
+            _updateSessionOutputLines();
           });
           _outputStreamController.add(error);
           _scrollToBottom();
@@ -82,6 +106,18 @@ class _TerminalPageState extends State<TerminalPage> {
           setState(() {
             _isRunning = false;
             _outputLines.add('\n[Process exited with code: $code]');
+            // Mark the session as completed
+            _session = _session.copyWith(
+              isRunning: false,
+              completed: true,
+              exitCode: code,
+              outputLines: List.from(_outputLines),
+            );
+            
+            // Notify parent about the updated session
+            if (widget.onSessionUpdated != null) {
+              widget.onSessionUpdated!(_session);
+            }
           });
           _outputStreamController.add('\n[Process exited with code: $code]');
           _scrollToBottom();
@@ -101,7 +137,30 @@ class _TerminalPageState extends State<TerminalPage> {
       setState(() {
         _outputLines.add('[ERROR] Failed to start process: $e');
         _isRunning = false;
+        // Mark the session as completed with error
+        _session = _session.copyWith(
+          isRunning: false,
+          completed: true,
+          error: e.toString(),
+          outputLines: List.from(_outputLines),
+        );
+        
+        // Notify parent about the updated session
+        if (widget.onSessionUpdated != null) {
+          widget.onSessionUpdated!(_session);
+        }
       });
+    }
+  }
+
+  // Helper to update the session's output lines
+  void _updateSessionOutputLines() {
+    _session = _session.copyWith(
+      outputLines: List.from(_outputLines),
+    );
+    // Notify parent about the updated session
+    if (widget.onSessionUpdated != null) {
+      widget.onSessionUpdated!(_session);
     }
   }
 
@@ -111,6 +170,17 @@ class _TerminalPageState extends State<TerminalPage> {
       setState(() {
         _outputLines.add('[Process terminated by user]');
         _isRunning = false;
+        // Mark the session as completed when terminated
+        _session = _session.copyWith(
+          isRunning: false,
+          completed: true,
+          outputLines: List.from(_outputLines),
+        );
+        
+        // Notify parent about the updated session
+        if (widget.onSessionUpdated != null) {
+          widget.onSessionUpdated!(_session);
+        }
       });
       _scrollToBottom();
     }

@@ -8,6 +8,8 @@ class CommandSession {
   final int exitCode;
   final bool isRunning;
   final DateTime startTime;
+  final bool completed;
+  final List<String> outputLines;
 
   CommandSession({
     required this.id,
@@ -17,7 +19,11 @@ class CommandSession {
     this.exitCode = 0,
     this.isRunning = true,
     DateTime? startTime,
-  }) : startTime = startTime ?? DateTime.now();
+    this.completed = false,
+    List<String>? outputLines,
+  }) : 
+    startTime = startTime ?? DateTime.now(),
+    outputLines = outputLines ?? [];
 
   CommandSession copyWith({
     String? id,
@@ -27,6 +33,8 @@ class CommandSession {
     int? exitCode,
     bool? isRunning,
     DateTime? startTime,
+    bool? completed,
+    List<String>? outputLines,
   }) {
     return CommandSession(
       id: id ?? this.id,
@@ -36,6 +44,8 @@ class CommandSession {
       exitCode: exitCode ?? this.exitCode,
       isRunning: isRunning ?? this.isRunning,
       startTime: startTime ?? this.startTime,
+      completed: completed ?? this.completed,
+      outputLines: outputLines ?? this.outputLines,
     );
   }
 } 
