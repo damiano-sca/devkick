@@ -1,5 +1,7 @@
 # DevKick
 
+! This project is made almost exclusively by prompting using Claude 3.7, it's a test to check it's capabilities
+
 A powerful developer productivity tool built with Flutter that helps manage, organize, and execute terminal commands with ease.
 
 ![DevKick Logo](assets/devkick-logo.png) <!-- Add a logo image file if available -->

@@ -34,15 +34,96 @@ class _TerminalPageState extends State<TerminalPage> {
     _session = widget.session;
     _outputStreamController = StreamController<String>.broadcast();
     
-    // Initialize output lines and running state from session if it has been completed before
+    // Initialize output lines and running state from session
     if (_session.completed) {
+      // Session is marked as completed - load stored output
       _outputLines = List.from(_session.outputLines);
       _isRunning = _session.isRunning;
       // Schedule scroll to bottom for after the build
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     } else {
-      // Only start the process if it hasn't been completed before
+      // Check if there's an active process already running with this ID
+      final processActive = CommandService.isProcessActive(_session.id);
+      
+      if (processActive) {
+        // Process is already running in the background, reconnect to it
+        _reconnectToProcess();
+      } else {
+        // Get previously stored output, if any
+        final storedOutput = CommandService.getProcessOutput(_session.id);
+        if (storedOutput.isNotEmpty) {
+          // We have output but process isn't active anymore
+          setState(() {
+            _outputLines = List.from(storedOutput);
+            _isRunning = false;
+            _session = _session.copyWith(
+              isRunning: false,
+              completed: true,
+              outputLines: _outputLines,
+            );
+            if (widget.onSessionUpdated != null) {
+              widget.onSessionUpdated!(_session);
+            }
+          });
+          WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+        } else {
+          // No stored output and no active process - start a new one
+          _startProcess();
+        }
+      }
+    }
+  }
+
+  void _reconnectToProcess() {
+    // Reconnect to the existing process's output streams
+    final success = CommandService.reconnectToProcess(
+      _session.id,
+      onStdout: (data) {
+        setState(() {
+          _outputLines.add(data);
+          _updateSessionOutputLines();
+        });
+        _outputStreamController.add(data);
+        _scrollToBottom();
+      },
+      onStderr: (error) {
+        setState(() {
+          _outputLines.add(error);
+          _updateSessionOutputLines();
+        });
+        _outputStreamController.add(error);
+        _scrollToBottom();
+      },
+      onExit: (code) {
+        setState(() {
+          _isRunning = false;
+          _outputLines.add('\n[Process exited with code: $code]');
+          // Mark the session as completed
+          _session = _session.copyWith(
+            isRunning: false,
+            completed: true,
+            exitCode: code,
+            outputLines: List.from(_outputLines),
+          );
+          
+          // Notify parent about the updated session
+          if (widget.onSessionUpdated != null) {
+            widget.onSessionUpdated!(_session);
+          }
+        });
+        _outputStreamController.add('\n[Process exited with code: $code]');
+        _scrollToBottom();
+      },
+    );
+    
+    if (!success) {
+      // If reconnection failed, consider starting a new process
       _startProcess();
+    } else {
+      // Update running state
+      setState(() {
+        _isRunning = CommandService.isProcessActive(_session.id);
+      });
     }
   }
 
@@ -58,21 +139,46 @@ class _TerminalPageState extends State<TerminalPage> {
       // Create a new stream controller
       _outputStreamController = StreamController<String>.broadcast();
       
-      // Update session and check if it's already been run
+      // Update session and check if it's already been completed
       setState(() {
         _session = widget.session;
         
         if (_session.completed) {
-          // If the session has already been run, just load its output
+          // If the session has already been completed, just load its output
           _outputLines = List.from(_session.outputLines);
           _isRunning = _session.isRunning;
           // Schedule scroll to bottom for after the build
           WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
         } else {
-          // Only if the session hasn't been run before
-          _outputLines = [];
-          _isRunning = true;
-          _startProcess();
+          // Check if there's an active process already
+          final processActive = CommandService.isProcessActive(_session.id);
+          
+          if (processActive) {
+            // Process is already running in the background, reconnect to it
+            _reconnectToProcess();
+          } else {
+            // Get previously stored output, if any
+            final storedOutput = CommandService.getProcessOutput(_session.id);
+            if (storedOutput.isNotEmpty) {
+              // We have output but process isn't active anymore
+              _outputLines = List.from(storedOutput);
+              _isRunning = false;
+              _session = _session.copyWith(
+                isRunning: false,
+                completed: true,
+                outputLines: _outputLines,
+              );
+              if (widget.onSessionUpdated != null) {
+                widget.onSessionUpdated!(_session);
+              }
+              WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+            } else {
+              // No stored output and no active process - start a new one
+              _outputLines = [];
+              _isRunning = true;
+              _startProcess();
+            }
+          }
         }
       });
     }
@@ -84,6 +190,7 @@ class _TerminalPageState extends State<TerminalPage> {
       final processId = await CommandService.startProcess(
         _session.command.command,
         terminalType: _session.command.terminalType,
+        commandObj: _session.command,
         onStdout: (data) {
           setState(() {
             _outputLines.add(data);
@@ -203,6 +310,8 @@ class _TerminalPageState extends State<TerminalPage> {
 
   @override
   void dispose() {
+    // Just cancel our local subscription, but don't kill the process
+    // so it can continue running in the background
     _outputSubscription?.cancel();
     _outputStreamController.close();
     _scrollController.dispose();

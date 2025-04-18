@@ -15,6 +15,12 @@ class CommandService {
   /// Active process map (processId -> Process instance)
   static final Map<String, Process> _activeProcesses = {};
   
+  /// Store output lines for each active process
+  static final Map<String, List<String>> _processOutputs = {};
+  
+  /// Store process state (running or not)
+  static final Map<String, bool> _processRunning = {};
+  
   /// Key for storing commands in SharedPreferences
   static const String _commandsKey = 'commands';
   
@@ -383,12 +389,34 @@ class CommandService {
     }
   }
 
+  /// Get a list of active process IDs
+  static List<String> getActiveProcessIds() {
+    return _processRunning.entries
+        .where((entry) => entry.value == true)
+        .map((entry) => entry.key)
+        .toList();
+  }
+
+  /// Store command associated with a process ID
+  static final Map<String, Command> _processCommands = {};
+
+  /// Associate a command with a process ID
+  static void setCommandForProcessId(String processId, Command command) {
+    _processCommands[processId] = command;
+  }
+
+  /// Get the command associated with a process ID
+  static Command? getCommandForProcessId(String processId) {
+    return _processCommands[processId];
+  }
+
   /// Start a long-running process
   static Future<String> startProcess(String command, {
     TerminalType terminalType = TerminalType.prompt,
     Function(String)? onStdout,
     Function(String)? onStderr,
     Function(int)? onExit,
+    Command? commandObj,
   }) async {
     // Generate a unique ID for this process
     final processId = DateTime.now().millisecondsSinceEpoch.toString();
@@ -423,19 +451,33 @@ class CommandService {
       );
       
       _activeProcesses[processId] = process;
+      _processOutputs[processId] = [];
+      _processRunning[processId] = true;
+      
+      // Store the command object if provided
+      if (commandObj != null) {
+        setCommandForProcessId(processId, commandObj);
+      }
       
       // Set up stream listeners if callbacks are provided
       if (onStdout != null) {
-        process.stdout.transform(utf8.decoder).listen(onStdout);
+        process.stdout.transform(utf8.decoder).listen((data) {
+          _processOutputs[processId]?.add(data);
+          onStdout(data);
+        });
       }
       
       if (onStderr != null) {
-        process.stderr.transform(utf8.decoder).listen(onStderr);
+        process.stderr.transform(utf8.decoder).listen((data) {
+          _processOutputs[processId]?.add(data);
+          onStderr(data);
+        });
       }
       
       // Handle process exit
       process.exitCode.then((exitCode) {
-        _activeProcesses.remove(processId);
+        _processOutputs[processId]?.add('\n[Process exited with code: $exitCode]');
+        _processRunning[processId] = false;
         if (onExit != null) {
           onExit(exitCode);
         }
@@ -454,19 +496,87 @@ class CommandService {
     }
   }
 
+  /// Reconnect to an existing process's output streams
+  static bool reconnectToProcess(String processId, {
+    Function(String)? onStdout,
+    Function(String)? onStderr,
+    Function(int)? onExit,
+  }) {
+    // Check if the process exists
+    final process = _activeProcesses[processId];
+    if (process == null) {
+      return false;
+    }
+    
+    // Send all stored output first to catch up
+    final outputs = _processOutputs[processId] ?? [];
+    for (final output in outputs) {
+      if (onStdout != null) {
+        onStdout(output);
+      }
+    }
+    
+    // If the process is still running, set up new stream listeners
+    if (_processRunning[processId] == true) {
+      // Listen to stdout
+      process.stdout.transform(utf8.decoder).listen((data) {
+        _processOutputs[processId]?.add(data);
+        if (onStdout != null) {
+          onStdout(data);
+        }
+      });
+      
+      // Listen to stderr
+      process.stderr.transform(utf8.decoder).listen((data) {
+        _processOutputs[processId]?.add(data);
+        if (onStderr != null) {
+          onStderr(data);
+        }
+      });
+      
+      // Set up exit handler if needed
+      if (onExit != null) {
+        process.exitCode.then((exitCode) {
+          _processRunning[processId] = false;
+          onExit(exitCode);
+        });
+      }
+      
+      return true;
+    } else if (onExit != null) {
+      // If process already exited, call exit handler immediately
+      onExit(0); // We don't know the exact code here, so assume 0
+    }
+    
+    return true;
+  }
+
+  /// Check if a process is still active
+  static bool isProcessActive(String processId) {
+    return _activeProcesses.containsKey(processId) && 
+           _processRunning[processId] == true;
+  }
+
+  /// Get stored output for a process
+  static List<String> getProcessOutput(String processId) {
+    return _processOutputs[processId] ?? [];
+  }
+
   /// Kill a running process
   static void killProcess(String processId) {
     final process = _activeProcesses[processId];
     if (process != null) {
       process.kill();
+      _processRunning[processId] = false;
       _activeProcesses.remove(processId);
     }
   }
 
   /// Kill all running processes
   static void killAllProcesses() {
-    _activeProcesses.forEach((_, process) {
+    _activeProcesses.forEach((id, process) {
       process.kill();
+      _processRunning[id] = false;
     });
     _activeProcesses.clear();
   }
