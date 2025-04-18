@@ -23,23 +23,26 @@ class TerminalContainer extends StatefulWidget {
 }
 
 class _TerminalContainerState extends State<TerminalContainer> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+  TabController? _tabController;
   int _currentIndex = 0;
   final Map<String, GlobalKey> _tabKeys = {};
 
   @override
   void initState() {
     super.initState();
-    _initTabController();
     _initTabKeys();
+    _initTabController();
   }
 
   void _initTabController() {
-    _tabController = TabController(
-      length: widget.sessions.length,
-      vsync: this,
-    );
-    _tabController.addListener(_handleTabChange);
+    if (widget.sessions.isNotEmpty) {
+      _tabController = TabController(
+        length: widget.sessions.length,
+        vsync: this,
+        initialIndex: _currentIndex < widget.sessions.length ? _currentIndex : 0,
+      );
+      _tabController?.addListener(_handleTabChange);
+    }
   }
 
   void _initTabKeys() {
@@ -59,37 +62,47 @@ class _TerminalContainerState extends State<TerminalContainer> with SingleTicker
     _initTabKeys();
     
     // If the number of sessions changed, update the tab controller
-    if (widget.sessions.length != oldWidget.sessions.length) {
+    if (widget.sessions.length != oldWidget.sessions.length || _tabController == null) {
       _updateTabController();
     }
   }
 
   void _updateTabController() {
-    final oldIndex = _tabController.index;
-    _tabController.dispose();
+    _tabController?.removeListener(_handleTabChange);
+    _tabController?.dispose();
+    
+    if (widget.sessions.isEmpty) {
+      _tabController = null;
+      _currentIndex = 0;
+      return;
+    }
+    
     _tabController = TabController(
       length: widget.sessions.length, 
       vsync: this,
-      initialIndex: oldIndex < widget.sessions.length ? oldIndex : 0,
+      initialIndex: _currentIndex < widget.sessions.length ? _currentIndex : 0,
     );
-    _tabController.addListener(_handleTabChange);
+    _tabController?.addListener(_handleTabChange);
+    
     setState(() {
-      _currentIndex = _tabController.index;
+      _currentIndex = _tabController?.index ?? 0;
     });
   }
 
   void _handleTabChange() {
-    if (_tabController.indexIsChanging || _currentIndex != _tabController.index) {
+    if (_tabController == null) return;
+    
+    if (_tabController!.indexIsChanging || _currentIndex != _tabController!.index) {
       setState(() {
-        _currentIndex = _tabController.index;
+        _currentIndex = _tabController!.index;
       });
     }
   }
 
   @override
   void dispose() {
-    _tabController.removeListener(_handleTabChange);
-    _tabController.dispose();
+    _tabController?.removeListener(_handleTabChange);
+    _tabController?.dispose();
     super.dispose();
   }
 
@@ -120,6 +133,16 @@ class _TerminalContainerState extends State<TerminalContainer> with SingleTicker
           ],
         ),
       );
+    }
+
+    // Ensure tab controller is properly initialized with the correct length
+    if (_tabController == null || _tabController!.length != widget.sessions.length) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _updateTabController();
+        }
+      });
+      return const Center(child: CircularProgressIndicator());
     }
 
     return Column(
